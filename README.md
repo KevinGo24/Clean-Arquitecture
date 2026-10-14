@@ -289,6 +289,50 @@ FirmezaApi
   - Paquetes de autenticación (por ejemplo `Microsoft.AspNetCore.Authentication.JwtBearer`), si aplica.
 - **Regla práctica:** los controladores usan casos de uso y DTOs; no deberían usar `ApplicationDbContext` ni repositorios concretos.
 
+## 🔐 ¿Dónde va Identity?
+
+ASP.NET Core Identity se reparte entre capas. La regla es que el **dominio no lo conozca**, porque `IdentityUser` arrastra dependencias de framework.
+
+| Capa | Qué lleva de Identity | Paquetes |
+| --- | --- | --- |
+| 🏛️ Dominio (`FirmezaDominion`) | Nada | Ninguno |
+| ⚙️ Aplicación (`FirmezaApplications`) | Solo lo abstracto: contratos y DTOs | Ninguno de Identity |
+| 🔌 Infraestructura (`FirmezaInfractucture`) | La implementación técnica | `Microsoft.AspNetCore.Identity.EntityFrameworkCore` |
+| 🌐 API (`FirmezaApi`) | Endpoints y configuración de autenticación | `Microsoft.AspNetCore.Authentication.JwtBearer` (si usas JWT) |
+
+```text
+Firmeza.Web
+├── 🌐 FirmezaApi
+│   ├── Controllers
+│   │   └── AuthController.cs          ← login y registro
+│   ├── Program.cs                     ← AddAuthentication, AddJwtBearer, UseAuthentication, UseAuthorization
+│   └── UserRoles.cs                   ← roles usados en [Authorize(Roles = ...)]
+│
+├── ⚙️ FirmezaApplications
+│   ├── DTOs
+│   │   ├── LoginDto.cs
+│   │   └── AuthResponseDto.cs
+│   └── Interface
+│       └── IAuthService.cs            ← contrato: Login, Register
+│
+└── 🔌 FirmezaInfractucture
+    ├── Persistence
+    │   ├── ApplicationUser.cs         ← hereda de IdentityUser
+    │   └── ApplicationDbContext.cs    ← hereda de IdentityDbContext<ApplicationUser>
+    ├── Services (o Identity)
+    │   └── AuthService.cs             ← implementa IAuthService con UserManager, SignInManager y JWT
+    └── Migrations                     ← incluye las tablas de Identity
+```
+
+### Detalle por capa
+
+- **🔌 Infraestructura:** `ApplicationUser`, el `DbContext` con Identity, las migraciones de las tablas de Identity y `AuthService`, que usa `UserManager`, `SignInManager` y `RoleManager`. Si usas JWT, aquí también va la generación del token. El registro de Identity (`AddIdentity` o `AddIdentityCore`) se hace en su `DependencyInjection.cs`.
+- **⚙️ Aplicación:** `IAuthService` en `Interface` y los DTOs de entrada y salida en `DTOs`. La aplicación no debe saber que existe `UserManager`.
+- **🌐 API:** `AuthController` y la configuración de autenticación y autorización en `Program.cs`. `UserRoles.cs` puede quedarse aquí si solo se usa en `[Authorize(Roles = ...)]`; si la aplicación también necesita los roles, muévelo a `Common` en `FirmezaApplications`.
+- **🏛️ Dominio:** nada de Identity. Si el negocio necesita el concepto de usuario o cliente, créalo como entidad propia (por ejemplo `Cliente`) y enlázalo con el usuario de Identity solo por su id.
+
+> **Alternativa más simple:** poner todo Identity en la API. Funciona en proyectos pequeños, pero mezcla la persistencia con la capa web y rompe la separación de capas.
+
 ## 🔀 CQRS
 
 **CQRS** significa *Command Query Responsibility Segregation* (segregación de responsabilidades entre comandos y consultas). Separa las operaciones que modifican datos de las que solo los leen:
